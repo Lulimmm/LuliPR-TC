@@ -1,0 +1,82 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 1.0.9
+        required: true
+        default: 1.0.9
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($version)) { $version = "${{ github.ref_name }}" }
+          if ($version.StartsWith("v")) { $version = $version.Substring(1) }
+          $parsed = $null
+          if (-not [Version]::TryParse($version, [ref]$parsed)) { throw "Invalid version: $version" }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Update rotation version
+        shell: pwsh
+        run: |
+          $path = "ReaperRotation.cs"
+          $text = Get-Content -Raw -Encoding UTF8 $path
+          $updated = [regex]::Replace($text, '(\[RotationMetadata\(39u,\s*"[^"]+",\s*"[^"]+",\s*")[^"]+("\])', ('$1' + "${{ steps.version.outputs.version }}" + '$2'), 1)
+          if ($updated -eq $text) { throw "RotationMetadata was not found" }
+          Set-Content -Encoding UTF8 -Path $path -Value $updated
+
+      - name: Build
+        run: dotnet build Luli.csproj --configuration Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP "acr-package"
+          $dist = Join-Path $env:RUNNER_TEMP "dist"
+          New-Item -ItemType Directory -Force "$stage\Cino", $dist | Out-Null
+          Copy-Item "bin\Release\LuliReaperPR.dll", "bin\Release\LuliReaperPR.deps.json" "$stage\Cino\"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $sourceZip = [System.IO.Compression.ZipFile]::OpenRead("Cino.zip")
+          try {
+            $opener = $sourceZip.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq "Cino/opener.json" } | Select-Object -First 1
+            if ($null -eq $opener) { throw "Cino/opener.json was not found" }
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($opener, (Join-Path $stage "Cino\opener.json"), $true)
+          } finally { $sourceZip.Dispose() }
+          Compress-Archive -Path "$stage\Cino" -DestinationPath "$dist\latest.zip" -Force
+          $sha = (Get-FileHash -Algorithm SHA256 "$dist\latest.zip").Hash.ToLowerInvariant()
+          $manifest = Get-Content -Raw -Encoding UTF8 "repo.json" | ConvertFrom-Json
+          $manifest.version = "${{ steps.version.outputs.version }}"
+          $manifest.sha256 = $sha
+          $manifest.downloadUrl = "https://github.com/${{ github.repository }}/releases/latest/download/latest.zip"
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 "$dist\repo.json"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ github.token }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: |
+            ${{ runner.temp }}\dist\latest.zip
+            ${{ runner.temp }}\dist\repo.json
