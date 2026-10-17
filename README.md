@@ -18,4 +18,4 @@ The build output is `bin/Release/LuliReaperPR.dll`. The release workflow package
 
 ## Release
 
-Push a version tag such as `v1.0.9` or run the `Build and Release` workflow manually.
+Push a version tag such as `v1.0.10` or run the `Build and Release` workflow manually.
