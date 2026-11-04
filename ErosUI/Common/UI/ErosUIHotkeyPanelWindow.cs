@@ -26,6 +26,13 @@ public sealed class ErosUIHotkeyPanelWindow : Window
     private readonly int columns;
     private readonly float tile;
     private readonly float spacing;
+    private IReadOnlyList<(string Name, IHotkey Hotkey, uint GameIcon, bool GameIconHQ, Func<uint>? DynamicIconActionId, Func<(uint Icon, bool Hq)>? DynamicGameIcon)> orderedEntries
+        = Array.Empty<(string, IHotkey, uint, bool, Func<uint>?, Func<(uint, bool)>?)>();
+    private string[] cachedHotkeyOrder = Array.Empty<string>();
+    private bool hasCachedOrder;
+    private Vector2 cachedWindowSize;
+    private bool hasCachedWindowSize;
+    private readonly Dictionary<(uint Icon, bool Hq), ISharedImmediateTexture> gameIconTextures = new();
 
     // 右键拖拽换位状态（面板级, 一次只拖一格; 左键点击执行热键与拖拽完全解耦）
     private int 拖拽源 = -1;
@@ -63,9 +70,8 @@ public sealed class ErosUIHotkeyPanelWindow : Window
                                       : SimplePalette.UIColorScheme.Dark);
 
         ImGui.PushStyleColor(ImGuiCol.Text, SimplePalette.TextPrimary);
-        ImGui.PushStyleColor(ImGuiCol.Border, day ? new Vector4(0f, 0f, 0f, 0.10f)
-                                                  : new Vector4(1f, 1f, 1f, 0.10f));
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 12f);
+        ImGui.PushStyleColor(ImGuiCol.Border, SimplePalette.Border);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10f);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(14f, 12f));
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(10f, 10f));
         base.PreDraw();
@@ -87,12 +93,17 @@ public sealed class ErosUIHotkeyPanelWindow : Window
             cols * tile + (cols - 1) * spacing + pad.X * 2f,
             rows * tile + (rows - 1) * spacing + pad.Y * 2f);
         // 每帧显式尺寸精确贴合网格（勿改回 AlwaysAutoResize，实测会多出透明边）
-        ImGui.SetWindowSize(size, ImGuiCond.Always);
+        if (!hasCachedWindowSize || cachedWindowSize != size)
+        {
+            ImGui.SetWindowSize(size, ImGuiCond.Always);
+            cachedWindowSize = size;
+            hasCachedWindowSize = true;
+        }
 
         DrawWindowChrome();
 
         // 按用户自定义顺序排列（悬浮面板右键拖拽调整; 未调整过 = 注册原序）
-        var ordered = 按自定义顺序排序(entries);
+        var ordered = 取自定义顺序条目();
         var count = ordered.Count;
         if (count == 0)
         {
@@ -152,6 +163,26 @@ public sealed class ErosUIHotkeyPanelWindow : Window
         HandleWindowDrag();
     }
 
+    private IReadOnlyList<(string Name, IHotkey Hotkey, uint GameIcon, bool GameIconHQ, Func<uint>? DynamicIconActionId, Func<(uint Icon, bool Hq)>? DynamicGameIcon)> 取自定义顺序条目()
+    {
+        var order = ErosUISettings.Instance.HotkeyOrder;
+        if (hasCachedOrder && 序列相同(order, cachedHotkeyOrder))
+            return orderedEntries;
+
+        orderedEntries = 按自定义顺序排序(entries);
+        cachedHotkeyOrder = order.ToArray();
+        hasCachedOrder = true;
+        return orderedEntries;
+    }
+
+    private static bool 序列相同(IReadOnlyList<string> current, string[] snapshot)
+    {
+        if (current.Count != snapshot.Length) return false;
+        for (var i = 0; i < snapshot.Length; i++)
+            if (!string.Equals(current[i], snapshot[i], StringComparison.Ordinal)) return false;
+        return true;
+    }
+
     // ============================================================
     // === 单个图标按钮（渲染次序：底板 → 图标 → 点击判定 → 状态覆盖层 → 描边） ===
     // ============================================================
@@ -193,8 +224,15 @@ public sealed class ErosUIHotkeyPanelWindow : Window
         {
             try
             {
-                tex = Svc.Texture.GetFromGameIcon(
-                    new GameIconLookup(gameIcon, itemHq: gameIconHQ)).GetWrapOrDefault(null);
+                var key = (gameIcon, gameIconHQ);
+                if (!gameIconTextures.TryGetValue(key, out var sharedTexture))
+                {
+                    sharedTexture = Svc.Texture.GetFromGameIcon(
+                        new GameIconLookup(gameIcon, itemHq: gameIconHQ));
+                    gameIconTextures.Add(key, sharedTexture);
+                }
+
+                tex = sharedTexture.GetWrapOrDefault(null);
             }
             catch (Exception ex)
             {
@@ -426,19 +464,11 @@ public sealed class ErosUIHotkeyPanelWindow : Window
         var drawList = ImGui.GetWindowDrawList();
         ErosUILayer.垫牺牲帧(drawList);
         // 覆盖 Begin 压入的内容区内层裁剪, 底色/边框画满全窗口（本窗无标题栏）
-        drawList.PushClipRect(pos, max, false);
-
         var day = ErosUICommonSettings.Instance.UIMode == SettingsUIMode.Day;
-        var tint = day ? new Vector4(0.96f, 0.94f, 0.89f, 0.97f)
-                       : new Vector4(0.11f, 0.11f, 0.12f, 0.85f);
-        var border = day ? new Vector4(0f, 0f, 0f, 0.18f)
-                         : new Vector4(1f, 1f, 1f, 0.10f);
-
-        drawList.AddRectFilled(pos + new Vector2(0.5f), max - new Vector2(0.5f),
-            SimplePalette.ToU32(tint), 12f, ImDrawFlags.RoundCornersAll);
-        drawList.AddRect(pos + new Vector2(1f), max - new Vector2(1f),
-            SimplePalette.ToU32(border), 11f, ImDrawFlags.RoundCornersAll, 1f);
-        drawList.PopClipRect();
+        var tint = day ? new Vector4(0.33f, 0.24f, 0.60f, 0.72f)
+                       : new Vector4(0.17f, 0.12f, 0.29f, 0.80f);
+        ErosUILayer.DrawWebsiteSurface(drawList, pos + new Vector2(0.5f), max - new Vector2(0.5f),
+            tint, SimplePalette.BorderStrong, 10f, day ? 0.34f : 0.42f);
     }
 
     // 空白处按住左键拖动面板；位置钳制在屏幕工作区内。

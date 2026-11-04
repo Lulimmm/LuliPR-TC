@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version, for example 1.0.9
+        description: Release version, for example 1.3.4
         required: true
-        default: 1.0.10
+        default: 1.3.4
   push:
     tags:
       - v*
@@ -41,11 +41,17 @@ jobs:
       - name: Update rotation version
         shell: pwsh
         run: |
-          $path = "ReaperRotation.cs"
-          $text = Get-Content -Raw -Encoding UTF8 $path
-          $updated = [regex]::Replace($text, '(\[RotationMetadata\(39u,\s*"[^"]+",\s*"[^"]+",\s*")[^"]+("(?=,\s*ContentScope|\s*\)\]))', ('${1}' + "${{ steps.version.outputs.version }}" + '${2}'), 1)
-          if ($updated -eq $text) { throw "RotationMetadata was not found" }
-          Set-Content -Encoding UTF8 -Path $path -Value $updated
+          $rotations = @(
+            @{ Path = "Reaper/ReaperRotation.cs"; JobId = "39u" },
+            @{ Path = "Ninja/NinjaRotation.cs"; JobId = "30u" }
+          )
+          foreach ($rotation in $rotations) {
+            $text = Get-Content -Raw -Encoding UTF8 $rotation.Path
+            $pattern = '(\[RotationMetadata\(' + $rotation.JobId + ',\s*"[^"]+",\s*"[^"]+",\s*")[^"]+("(?=,\s*ContentScope|\s*\)\]))'
+            if (-not [regex]::IsMatch($text, $pattern)) { throw "RotationMetadata was not found in $($rotation.Path)" }
+            $updated = [regex]::Replace($text, $pattern, ('${1}' + "${{ steps.version.outputs.version }}" + '${2}'), 1)
+            if ($updated -ne $text) { Set-Content -Encoding UTF8 -Path $rotation.Path -Value $updated }
+          }
 
       - name: Build
         run: dotnet build Luli.csproj --configuration Release

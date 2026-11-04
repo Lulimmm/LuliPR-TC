@@ -30,6 +30,16 @@ public sealed class ErosUIQtPanelWindow : Window
     // 拖拽让位/松手回落时指数阻尼收敛到格位
     private static readonly Dictionary<string, Vector2> 动画格位 = new(StringComparer.Ordinal);
     private static int[] 显示序暂存 = Array.Empty<int>();
+    private readonly HashSet<string> visibleQtKeys = new(StringComparer.Ordinal);
+    private readonly List<string> visibleQtKeyOrder = new();
+    private string[] cachedVisibleQtKeyOrder = Array.Empty<string>();
+    private string[] cachedQtOrder = Array.Empty<string>();
+    private string? cachedJobTag;
+    private bool hasCachedDefinitions;
+    private Vector2 cachedWindowSize;
+    private bool hasCachedWindowSize;
+    private IReadOnlyList<QtDefinition> cachedDefinitions = Array.Empty<QtDefinition>();
+    private List<分类分组> cachedGroups = new();
 
     // 一个分类分组：组标题 + 组内条目（defs 平铺索引，组内顺序 = 面板显示顺序）。
     // 布局字段（标题高/内容Y/行数）每帧由 布局分组 填充。
@@ -62,9 +72,8 @@ public sealed class ErosUIQtPanelWindow : Window
         ImGui.PushStyleColor(ImGuiCol.Text, SimplePalette.TextPrimary);
         ImGui.PushStyleColor(ImGuiCol.TextDisabled, SimplePalette.TextDisabled);
         // Border 色同时是按钮边框色（FrameBorderSize>0 时），改动会影响所有按钮描边——勿删
-        ImGui.PushStyleColor(ImGuiCol.Border, day ? new Vector4(0f, 0f, 0f, 0.10f)
-                                                  : new Vector4(1f, 1f, 1f, 0.10f));
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 12f);
+        ImGui.PushStyleColor(ImGuiCol.Border, SimplePalette.Border);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding, 10f);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(14f, 12f));
         // 网格格子全部绝对定位、不吃 ItemSpacing；与格距保持一致仅为「无可用开关」提示等流式控件兜底
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(间距, 间距));
@@ -73,40 +82,29 @@ public sealed class ErosUIQtPanelWindow : Window
 
     public override void Draw()
     {
-        IReadOnlyList<QtDefinition> defs;
         try
         {
-            // HiddenQts is also used by the host to hide its native QT page.
-            // Keep that page-level state separate from this custom panel; the
-            // panel only follows its own per-QT visibility settings.
-            var visibleKeys = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var key in PromeSettings.Instance.QuickToggles.Keys)
-                if (ErosUISettings.Instance.IsQtVisible(key))
-                    visibleKeys.Add(key);
-
-            var resolved = QtRegistry.ResolveVisible(
-                visibleKeys,
-                new HashSet<string>(StringComparer.Ordinal));
-            // Keep one stable snapshot for this frame while the host registry
-            // may be rebuilt by a rotation refresh.
-            defs = new List<QtDefinition>(resolved);
+            更新定义快照();
         }
         catch
         {
             return;
         }
 
-        // 按用户自定义顺序排列（面板右键拖拽调整; 未调整过 = 注册原序）
-        defs = 按自定义顺序排序(defs);
-
-        // 按 Category 分组并计算组布局（列数/标题高/组偏移）
-        var groups = 构建分组(defs);
+        var defs = cachedDefinitions;
+        var groups = cachedGroups;
         var cols = 布局分组(groups);
 
         // 每帧显式设置尺寸，让窗口精确贴合按钮网格。
         // 不要改回 AlwaysAutoResize：自适应尺寸会被窗口状态持久化干扰，
         // 导致窗口比内容宽出一截、左右多出透明边。
-        ImGui.SetWindowSize(计算窗口尺寸(groups, cols, defs.Count), ImGuiCond.Always);
+        var windowSize = 计算窗口尺寸(groups, cols, defs.Count);
+        if (!hasCachedWindowSize || cachedWindowSize != windowSize)
+        {
+            ImGui.SetWindowSize(windowSize, ImGuiCond.Always);
+            cachedWindowSize = windowSize;
+            hasCachedWindowSize = true;
+        }
 
         DrawWindowChrome();
 
@@ -202,6 +200,45 @@ public sealed class ErosUIQtPanelWindow : Window
         }
 
         HandleWindowDrag();
+    }
+
+    private void 更新定义快照()
+    {
+        var settings = ErosUISettings.Instance;
+        visibleQtKeys.Clear();
+        visibleQtKeyOrder.Clear();
+        foreach (var key in PromeSettings.Instance.QuickToggles.Keys)
+        {
+            if (!settings.IsQtVisible(key)) continue;
+            visibleQtKeys.Add(key);
+            visibleQtKeyOrder.Add(key);
+        }
+
+        if (hasCachedDefinitions
+            && 序列相同(visibleQtKeyOrder, cachedVisibleQtKeyOrder)
+            && 序列相同(settings.QtOrder, cachedQtOrder)
+            && string.Equals(cachedJobTag, ErosUIJobEnv.JobTag, StringComparison.Ordinal))
+            return;
+
+        // Resolve and copy once per registry/visibility/order change so a host
+        // refresh cannot mutate the snapshot during the panel's draw pass.
+        var resolved = QtRegistry.ResolveVisible(
+            visibleQtKeys,
+            new HashSet<string>(StringComparer.Ordinal));
+        cachedDefinitions = 按自定义顺序排序(resolved).ToList();
+        cachedGroups = 构建分组(cachedDefinitions);
+        cachedVisibleQtKeyOrder = visibleQtKeyOrder.ToArray();
+        cachedQtOrder = settings.QtOrder.ToArray();
+        cachedJobTag = ErosUIJobEnv.JobTag;
+        hasCachedDefinitions = true;
+    }
+
+    private static bool 序列相同(IReadOnlyList<string> current, string[] snapshot)
+    {
+        if (current.Count != snapshot.Length) return false;
+        for (var i = 0; i < snapshot.Length; i++)
+            if (!string.Equals(current[i], snapshot[i], StringComparison.Ordinal)) return false;
+        return true;
     }
 
     public override void PostDraw()
@@ -401,19 +438,11 @@ public sealed class ErosUIQtPanelWindow : Window
         var drawList = ImGui.GetWindowDrawList();
         ErosUILayer.垫牺牲帧(drawList);
         // 覆盖 Begin 压入的内容区内层裁剪, 底色/边框画满全窗口（本窗无标题栏）
-        drawList.PushClipRect(pos, max, false);
-
         var day = ErosUICommonSettings.Instance.UIMode == SettingsUIMode.Day;
-        var tint = day ? new Vector4(0.96f, 0.94f, 0.89f, 0.97f)
-                       : new Vector4(0.11f, 0.11f, 0.12f, 0.85f);
-        var border = day ? new Vector4(0f, 0f, 0f, 0.18f)
-                         : new Vector4(1f, 1f, 1f, 0.10f);
-
-        drawList.AddRectFilled(pos + new Vector2(0.5f), max - new Vector2(0.5f),
-            SimplePalette.ToU32(tint), 12f, ImDrawFlags.RoundCornersAll);
-        drawList.AddRect(pos + new Vector2(1f), max - new Vector2(1f),
-            SimplePalette.ToU32(border), 11f, ImDrawFlags.RoundCornersAll, 1f);
-        drawList.PopClipRect();
+        var tint = day ? new Vector4(0.33f, 0.24f, 0.60f, 0.72f)
+                       : new Vector4(0.17f, 0.12f, 0.29f, 0.80f);
+        ErosUILayer.DrawWebsiteSurface(drawList, pos + new Vector2(0.5f), max - new Vector2(0.5f),
+            tint, SimplePalette.BorderStrong, 10f, day ? 0.34f : 0.42f);
     }
 
     // 空白处按住左键拖动面板；位置钳制在屏幕工作区内。

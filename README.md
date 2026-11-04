@@ -1,21 +1,19 @@
-# Luli Reaper PR (繁中服)
+# LuliPR-TC ACR
 
-PromeRotation Reaper ACR, adapted for the Taiwan/Traditional Chinese client using `PromeRotation.SDK.TC`.
+PromeRotation Taiwan-client ACR for Reaper (RPR) and Ninja (NIN). The source is synchronized with the national-client 1.3.4 release and built against the Taiwan-client SDK.
 
 ## Build
-
-Requires the .NET 9 SDK. Restore and build with:
 
 ```powershell
 dotnet build Luli.csproj --configuration Release
 ```
 
-The SDK package supplies compile-time references for Dalamud API 13 and PromeRotation. Runtime dependencies are provided by the installed game/plugin environment.
+The project targets `net9.0-windows` and uses `PromeRotation.SDK.TC` for Dalamud API 13 and PromeRotation references.
 
-## ACR package
+## Package
 
-The build output is `bin/Release/LuliReaperPR.dll`. The release workflow packages it with its dependency manifest and opener configuration for PromeRotation.
+The build output is `bin/Release/LuliReaperPR.dll`. The release workflow packages the DLL, dependency manifest, and opener settings. `repo.json` advertises both RPR and NIN.
 
-## Release
+The [PromeRotation development reference manual](PromeRotation%20%E5%BC%80%E5%8F%91%E5%8F%82%E8%80%83%E6%89%8B%E5%86%8C.md) was written for the national client/API 15. TC builds use API 13; the SDK package and compile results are authoritative for TC compatibility.
 
-Push a version tag such as `v1.0.10` or run the `Build and Release` workflow manually.
+The current rotation version is `1.3.4`. Push a matching version tag or run the `Build and Release` workflow manually to publish.

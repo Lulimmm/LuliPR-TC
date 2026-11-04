@@ -5,11 +5,11 @@ namespace ErosUI;
 
 // 侧边栏布局（夜间/日间模式共用）：左侧竖排导航（含末位「主题」页）+ 竖分隔线 + 右侧滚动内容区。
 // 全部颜色取自 SimplePalette（随 Dark/Light 方案变化），本文件不含硬编码颜色；
-// 两模式的纯色半透明底色与标题栏/滚动条样式分别在 .Night.cs / .Day.cs。
+// 两模式的纯色半透明底色与滚动条样式分别在 .Night.cs / .Day.cs。
 public abstract partial class SettingsWindowBase
 {
     // 侧边栏模式增量样式的颜色 Push 数量（Pop 时与 BaseStyleColorCount 相加）。
-    private const int SidebarChromeColorCount = 7;
+    private const int SidebarChromeColorCount = 4;
 
     // 侧边栏按钮出现/消失动效状态（按标签记忆: T 0=收起 1=完全展开, 时间制缓动趋近目标值）。
     // 新出现的标签从 0 展开（高度+透明度渐入）; 被移除的标签立即从状态表删除（不做淡出）。
@@ -24,6 +24,7 @@ public abstract partial class SettingsWindowBase
 
     private readonly Dictionary<string, TabAnimState> tabAnims = new();
     private HashSet<string>? prevTabLabels;
+    private string[]? sidebarLabels;
 
     // 出现/收起动效时长（秒）
     private const float TabAnimDuration = 0.22f;
@@ -59,9 +60,15 @@ public abstract partial class SettingsWindowBase
 
             var now = ImGui.GetTime();
             var labels = AllTabs;
+            var labelsChanged = !ReferenceEquals(labels, sidebarLabels);
 
             // 首帧全部直接落位，不做入场动画
-            prevTabLabels ??= new HashSet<string>(labels);
+            if (prevTabLabels == null)
+            {
+                prevTabLabels = new HashSet<string>(labels);
+                sidebarLabels = labels;
+                labelsChanged = false;
+            }
 
             // 出现走展开动效; 收起直接消失（不保留淡出项, 不推挤下方按钮）
             for (var i = 0; i < labels.Length; i++)
@@ -77,10 +84,21 @@ public abstract partial class SettingsWindowBase
                 st.LastIndex = i;
                 推进TabAnim(st, 1f, now);
             }
-            var dead = tabAnims.Where(kv => Array.IndexOf(labels, kv.Key) < 0).Select(kv => kv.Key).ToList();
-            foreach (var key in dead) tabAnims.Remove(key);
+            if (labelsChanged)
+            {
+                var liveLabels = new HashSet<string>(labels);
+                List<string>? dead = null;
+                foreach (var key in tabAnims.Keys)
+                {
+                    if (liveLabels.Contains(key)) continue;
+                    (dead ??= new List<string>()).Add(key);
+                }
+                if (dead != null)
+                    foreach (var key in dead) tabAnims.Remove(key);
 
-            prevTabLabels = new HashSet<string>(labels);
+                prevTabLabels = liveLabels;
+                sidebarLabels = labels;
+            }
 
             var drawn = 0;
             for (var i = 0; i < labels.Length; i++)

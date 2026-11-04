@@ -16,5 +16,20 @@
   <ItemGroup>
     <Compile Include="**\*.cs" Exclude="bin\**\*;obj\**\*;**\bin\**\*;**\obj\**\*" />
     <PackageReference Include="PromeRotation.SDK.TC" Version="0.1.0-preview.2" />
+    <EmbeddedResource Include="ErosUI\Resources\bg2.webp">
+      <LogicalName>ErosUI.Resources.bg2.webp</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="ErosUI\Resources\start.webp">
+      <LogicalName>ErosUI.Resources.start.webp</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="ErosUI\Resources\loading.webp">
+      <LogicalName>ErosUI.Resources.loading.webp</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="ErosUI\Resources\pet\*.webp">
+      <LogicalName>ErosUI.Resources.pet.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="ErosUI\Resources\loader\*.webp">
+      <LogicalName>ErosUI.Resources.loader.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

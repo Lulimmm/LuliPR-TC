@@ -17,9 +17,11 @@ public sealed class ErosUISettingsWindow : SettingsWindowBase
     }
 
     // 页签固定, 末位「主题」页由基类追加
-    private static readonly string[] tabs = ["基础设置", "Hotkey", "QT面板"];
+    private static readonly string[] tabs = ["基础设置", "Hotkey", "QT面板", "更新通告"];
 
-    protected override string[] Tabs => tabs;
+    private static readonly string[] tabsWithDebug = [..tabs, "Debug"];
+
+    protected override string[] Tabs => ErosUIJobEnv.DrawDebugSettings == null ? tabs : tabsWithDebug;
 
     protected override void DrawTabContent(int tabIndex)
     {
@@ -28,6 +30,8 @@ public sealed class ErosUISettingsWindow : SettingsWindowBase
             case 0: ErosUISettingsUI.DrawGeneral(); break;
             case 1: ErosUISettingsUI.DrawHotkey(); break;
             case 2: ErosUISettingsUI.DrawQtPanel(); break;
+            case 3: ErosUIUpdatesPage.Draw(); break;
+            case 4: ErosUIJobEnv.DrawDebugSettings?.Invoke(); break;
         }
     }
 }

@@ -1,0 +1,509 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using System.Text.Json;
+using Dalamud.Bindings.ImGui;
+using ErosUI;
+using PromeRotation.Core;
+using PromeRotation.Data;
+using PromeRotation.Helpers;
+using PromeRotation.CustomTimeline;
+using PromeRotation.Timeline.Core;
+
+using Ninja.PR.Data;
+
+namespace Ninja.PR.Timeline;
+
+public sealed class NinjaJobNodeProvider : IJobNodeProvider
+{
+    public void RegisterNodes(RotationNodeContext context)
+    {
+        NinjaNinkiCondition.Register(context);
+        GeneralTargetCondition.Register(context);
+        NinjaSettingAction.Register(context);
+        NinjaPrQtAction.Register(context);
+        NinjaTriggerTrickDelayAction.Register(context);
+        NinjaTriggerForceRaitonAction.Register(context);
+        NinjaTriggerRaitonBackstabAction.Register(context);
+        NinjaTriggerRaitonRangeAction.Register(context);
+        NinjaTriggerP5BunshinAction.Register(context);
+        NinjaHotkeyAction.Register(context);
+    }
+
+    public IReadOnlyList<(string DisplayName, string Description, Func<ICondition> Create)> GetConditionDescriptors()
+        => new (string, string, Func<ICondition>)[]
+        {
+            ("Ninja/忍气检测", "忍气达到指定值时通过", () => new NinjaNinkiCondition()),
+            ("检测目标条件", "筛选目标类型并组合目标条件", () => new GeneralTargetCondition()),
+        };
+
+    public IReadOnlyList<(string DisplayName, string Description, Func<IAction> Create)> GetActionDescriptors()
+        => new (string, string, Func<IAction>)[]
+        {
+            // Keep the original aggregate nodes for existing timelines.
+            ("Ninja/设置开关", "在时间轴触发时设置 Ninja 循环选项", () => new NinjaSettingAction()),
+            ("Ninja/PR QT", "按 qt2 模板批量设置 Ninja QT", () => new NinjaPrQtAction()),
+            ("Ninja/HotKey", "执行 Ninja 热键面板中的指定动作", () => new NinjaHotkeyAction()),
+            ("Ninja/P5完美分身", "AE TriggerAction_P5Pbunshin：设置 P5 完美分身资源保留", () => new NinjaTriggerP5BunshinAction()),
+        };
+}
+
+public sealed class NinjaHotkeyAction : IAction, ISerializableAction, IJobNodeDescriptor
+{
+    private const string TypeKey = "luli_ninja_trigger_hotkey";
+    private string hotkey = string.Empty;
+
+    private static string[] HotkeyNames => ErosUIFramework.GetHotkeyNames();
+
+    public string NodeDisplayName => "Ninja/HotKey";
+    public NodeParamInfo[] Params => new[]
+    {
+        new NodeParamInfo("hotkey", "热键", "执行 Ninja 热键面板中的指定动作", "enum",
+            HotkeyNames.Select(name => (name, name)).ToArray()),
+    };
+
+    public bool Draw()
+    {
+        var names = HotkeyNames;
+        if (names.Length == 0) return false;
+        var selected = Array.IndexOf(names, hotkey);
+        if (selected < 0) selected = 0;
+        if (!ImGui.Combo("选择使用 HotKey", ref selected, names, names.Length)) return false;
+        hotkey = names[selected];
+        return true;
+    }
+
+    public string GetParam(string fieldName) => fieldName == "hotkey" ? hotkey : string.Empty;
+
+    public void SetParam(string fieldName, string value)
+    {
+        if (fieldName == "hotkey") hotkey = value;
+    }
+
+    public void Execute() => ErosUIFramework.ExecuteHotkey(hotkey);
+
+    public ActionDto ToDto() => new()
+    {
+        Type = TypeKey,
+        Enabled = true,
+        Params = new Dictionary<string, string> { ["hotkey"] = hotkey },
+    };
+
+    public static void Register(RotationNodeContext context)
+        => ActionFactory.Register(context, TypeKey, dto =>
+        {
+            var action = new NinjaHotkeyAction();
+            if (dto.Params?.TryGetValue("hotkey", out var key) == true)
+                action.SetParam("hotkey", key);
+            return action;
+        });
+}
+
+/// <summary>
+/// Batch QT trigger based on the Reaper qt2 template. Each selected QT has
+/// three states: not included, included and enabled, or included and disabled.
+/// </summary>
+public sealed class NinjaPrQtAction : IAction, ISerializableAction, IJobNodeDescriptor
+{
+    private const string TypeKey = "luli_ninja_pr_qt";
+    private const string ValuesParam = "qtValues";
+    private readonly Dictionary<string, bool> qtValues = new(StringComparer.Ordinal);
+
+    private static string[] QtNames => NinjaRotation.QtList.Keys.ToArray();
+
+    public string NodeDisplayName => "Ninja/PR QT";
+    public NodeParamInfo[] Params => Array.Empty<NodeParamInfo>();
+
+    public bool DrawJobNodeEditor()
+    {
+        var names = QtNames;
+        ImGui.NewLine();
+        ImGui.Separator();
+        ImGui.Text("点击按钮在三种状态间切换：未添加 / 已关闭 / 已启用");
+        ImGui.NewLine();
+
+        var count = 0;
+        foreach (var qt in names)
+        {
+            ImGui.PushID(qt);
+            if (qtValues.TryGetValue(qt, out var isEnabled))
+                ImGui.PushStyleColor(ImGuiCol.Text, isEnabled
+                    ? new Vector4(0f, 1f, 0f, 1f)
+                    : new Vector4(1f, 0.4f, 0.7f, 1f));
+            else
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 1f, 1f, 1f));
+
+            if (ImGui.Button(qt))
+            {
+                if (!qtValues.TryGetValue(qt, out var value))
+                    qtValues[qt] = false;
+                else if (!value)
+                    qtValues[qt] = true;
+                else
+                    qtValues.Remove(qt);
+            }
+
+            ImGui.PopStyleColor();
+            ImGui.PopID();
+            if (++count % 5 != 0) ImGui.SameLine();
+        }
+
+        ImGui.NewLine();
+        ImGui.Separator();
+        if (qtValues.Count == 0) return true;
+
+        var toRemove = new List<string>();
+        foreach (var (qt, configuredValue) in qtValues)
+        {
+            var value = configuredValue;
+            ImGui.PushID(qt);
+            if (ImGui.Checkbox(" ", ref value)) qtValues[qt] = value;
+            ImGui.SameLine();
+            ImGui.Text(qt);
+            ImGui.SameLine();
+            var color = value ? new Vector4(0f, 1f, 0f, 1f) : new Vector4(1f, 0f, 0f, 1f);
+            ImGui.TextColored(in color, value ? "（已启用）" : "（已关闭）");
+            ImGui.SameLine();
+            if (ImGui.Button("删除")) toRemove.Add(qt);
+            ImGui.PopID();
+        }
+
+        foreach (var qt in toRemove) qtValues.Remove(qt);
+
+        ImGui.Separator();
+        if (ImGui.Button("全部启用"))
+        {
+            foreach (var qt in qtValues.Keys.ToList()) qtValues[qt] = true;
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("全部关闭"))
+        {
+            foreach (var qt in qtValues.Keys.ToList()) qtValues[qt] = false;
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("清除所有")) qtValues.Clear();
+        return true;
+    }
+
+    public string GetParam(string fieldName)
+        => fieldName == ValuesParam ? JsonSerializer.Serialize(qtValues) : string.Empty;
+
+    public void SetParam(string fieldName, string value)
+    {
+        if (fieldName != ValuesParam || string.IsNullOrWhiteSpace(value)) return;
+        try
+        {
+            var values = JsonSerializer.Deserialize<Dictionary<string, bool>>(value);
+            if (values == null) return;
+            qtValues.Clear();
+            foreach (var (qt, enabled) in values)
+            {
+                if (NinjaRotation.QtList.ContainsKey(qt)) qtValues[qt] = enabled;
+            }
+        }
+        catch (JsonException)
+        {
+            qtValues.Clear();
+        }
+    }
+
+    public void Execute()
+    {
+        foreach (var (qt, enabled) in qtValues)
+            PromeSettings.Instance.SetQt(qt, enabled);
+    }
+
+    public ActionDto ToDto() => new()
+    {
+        Type = TypeKey,
+        Enabled = true,
+        Params = new Dictionary<string, string> { [ValuesParam] = GetParam(ValuesParam) },
+    };
+
+    public static void Register(RotationNodeContext context)
+    {
+        ActionFactory.Register(context, TypeKey, dto =>
+        {
+            var action = new NinjaPrQtAction();
+            if (dto.Params?.TryGetValue(ValuesParam, out var values) == true)
+                action.SetParam(ValuesParam, values);
+            return action;
+        });
+    }
+}
+
+public sealed class NinjaSettingAction : IAction, ISerializableAction, IJobNodeDescriptor
+{
+    private const string TypeKey = "luli_ninja_setting";
+    private static readonly string[] SettingKeys =
+    {
+        "trickDelay", "forceRaiton", "raitonBackstab", "raitonRange", "p5Bunshin",
+    };
+    private static readonly string[] SettingLabels =
+    {
+        "下一个小背刺延后至大背刺", "强制雷遁", "雷遁背刺策略", "雷遁远程止损", "P5分身资源保留",
+    };
+
+    private int settingIndex;
+    private bool enabled = true;
+
+    public string NodeDisplayName => "Ninja/设置开关";
+    public NodeParamInfo[] Params => new[]
+    {
+        new NodeParamInfo("setting", "设置", "需要修改的 Ninja 循环选项", "enum",
+            new[]
+            {
+                ("trickDelay", SettingLabels[0]),
+                ("forceRaiton", SettingLabels[1]),
+                ("raitonBackstab", SettingLabels[2]),
+                ("raitonRange", SettingLabels[3]),
+                ("p5Bunshin", SettingLabels[4]),
+            }),
+        new NodeParamInfo("enabled", "启用", "开启或关闭所选选项", "bool"),
+    };
+
+    public bool Draw()
+    {
+        var changed = ImGui.Combo("设置", ref settingIndex, SettingLabels, SettingLabels.Length);
+        var value = enabled;
+        if (ImGui.Checkbox("启用", ref value))
+        {
+            enabled = value;
+            changed = true;
+        }
+        return changed;
+    }
+
+    public string GetParam(string fieldName) => fieldName switch
+    {
+        "setting" => SettingKeys[Math.Clamp(settingIndex, 0, SettingKeys.Length - 1)],
+        "enabled" => enabled.ToString(),
+        _ => string.Empty,
+    };
+
+    public void SetParam(string fieldName, string value)
+    {
+        if (fieldName == "setting")
+        {
+            var index = Array.IndexOf(SettingKeys, value);
+            if (index < 0) index = Array.IndexOf(SettingLabels, value);
+            if (index >= 0) settingIndex = index;
+        }
+        else if (fieldName == "enabled" && bool.TryParse(value, out var parsed))
+        {
+            enabled = parsed;
+        }
+    }
+
+    public void Execute()
+    {
+        var settings = NinjaSettings.Instance;
+        switch (SettingKeys[Math.Clamp(settingIndex, 0, SettingKeys.Length - 1)])
+        {
+            case "trickDelay": settings.TrickAttackDelayUntilNextMug = enabled; break;
+            case "forceRaiton": settings.ForceRaiton = enabled; break;
+            case "raitonBackstab": settings.RaitonBackstab = enabled; break;
+            case "raitonRange": PromeSettings.Instance.SetQt(NinjaQts.RaitonWhenOutOfRange, enabled); break;
+            case "p5Bunshin": settings.P5PerfectBunshin = enabled; break;
+        }
+    }
+
+    public ActionDto ToDto() => new()
+    {
+        Type = TypeKey,
+        Enabled = true,
+        Params = new Dictionary<string, string>
+        {
+            ["setting"] = GetParam("setting"),
+            ["enabled"] = enabled.ToString(),
+        },
+    };
+
+    public static void Register(RotationNodeContext context)
+    {
+        ActionFactory.Register(context, TypeKey, dto =>
+        {
+            var action = new NinjaSettingAction();
+            if (dto.Params != null)
+            {
+                if (dto.Params.TryGetValue("setting", out var setting)) action.SetParam("setting", setting);
+                if (dto.Params.TryGetValue("enabled", out var value)) action.SetParam("enabled", value);
+            }
+            return action;
+        });
+    }
+}
+
+/// <summary>
+/// Shared implementation for the boolean AE Ninja trigger actions.
+/// Each concrete action keeps its own type key so timelines can select the
+/// same setting granularity as the original AE rotation.
+/// </summary>
+public abstract class NinjaTriggerBooleanAction : IAction, ISerializableAction, IJobNodeDescriptor
+{
+    protected bool Enabled;
+
+    protected abstract string TypeKey { get; }
+    protected abstract string SettingLabel { get; }
+    public abstract string NodeDisplayName { get; }
+
+    public NodeParamInfo[] Params => new[]
+    {
+        new NodeParamInfo("enabled", "启用", "开启或关闭该 Ninja Trigger 设置", "bool"),
+    };
+
+    public bool Draw()
+    {
+        var value = Enabled;
+        if (!ImGui.Checkbox(SettingLabel, ref value)) return false;
+        Enabled = value;
+        return true;
+    }
+
+    public string GetParam(string fieldName)
+        => fieldName == "enabled" ? Enabled.ToString() : string.Empty;
+
+    public void SetParam(string fieldName, string value)
+    {
+        if (fieldName == "enabled" && bool.TryParse(value, out var enabled))
+            Enabled = enabled;
+    }
+
+    public void Execute() => Apply(Enabled);
+
+    protected abstract void Apply(bool enabled);
+
+    public ActionDto ToDto() => new()
+    {
+        Type = TypeKey,
+        Enabled = true,
+        Params = new Dictionary<string, string>
+        {
+            ["enabled"] = Enabled.ToString(),
+        },
+    };
+
+    protected static void RegisterType<T>(RotationNodeContext context, string typeKey)
+        where T : NinjaTriggerBooleanAction, new()
+    {
+        ActionFactory.Register(context, typeKey, dto =>
+        {
+            var action = new T();
+            if (dto.Params != null && dto.Params.TryGetValue("enabled", out var value))
+                action.SetParam("enabled", value);
+            return action;
+        });
+    }
+}
+
+public sealed class NinjaTriggerTrickDelayAction : NinjaTriggerBooleanAction
+{
+    protected override string TypeKey => "luli_ninja_trigger_trick_delay";
+    protected override string SettingLabel => "下一个小背刺延后至大背刺";
+    public override string NodeDisplayName => "Ninja/延后小背刺至大背刺";
+
+    protected override void Apply(bool enabled)
+        => NinjaSettings.Instance.TrickAttackDelayUntilNextMug = enabled;
+
+    public static void Register(RotationNodeContext context)
+        => RegisterType<NinjaTriggerTrickDelayAction>(context, "luli_ninja_trigger_trick_delay");
+}
+
+public sealed class NinjaTriggerForceRaitonAction : NinjaTriggerBooleanAction
+{
+    protected override string TypeKey => "luli_ninja_trigger_force_raiton";
+    protected override string SettingLabel => "硬砸雷遁";
+    public override string NodeDisplayName => "Ninja/硬砸雷遁";
+
+    protected override void Apply(bool enabled)
+        => NinjaSettings.Instance.ForceRaiton = enabled;
+
+    public static void Register(RotationNodeContext context)
+        => RegisterType<NinjaTriggerForceRaitonAction>(context, "luli_ninja_trigger_force_raiton");
+}
+
+public sealed class NinjaTriggerRaitonBackstabAction : NinjaTriggerBooleanAction
+{
+    protected override string TypeKey => "luli_ninja_trigger_raiton_backstab";
+    protected override string SettingLabel => "雷遁背刺";
+    public override string NodeDisplayName => "Ninja/雷遁背刺";
+
+    protected override void Apply(bool enabled)
+        => NinjaSettings.Instance.RaitonBackstab = enabled;
+
+    public static void Register(RotationNodeContext context)
+        => RegisterType<NinjaTriggerRaitonBackstabAction>(context, "luli_ninja_trigger_raiton_backstab");
+}
+
+public sealed class NinjaTriggerRaitonRangeAction : NinjaTriggerBooleanAction
+{
+    protected override string TypeKey => "luli_ninja_trigger_raiton_range";
+    protected override string SettingLabel => "远离雷遁止损";
+    public override string NodeDisplayName => "Ninja/远离雷遁止损";
+
+    protected override void Apply(bool enabled)
+        => PromeSettings.Instance.SetQt(NinjaQts.RaitonWhenOutOfRange, enabled);
+
+    public static void Register(RotationNodeContext context)
+        => RegisterType<NinjaTriggerRaitonRangeAction>(context, "luli_ninja_trigger_raiton_range");
+}
+
+public sealed class NinjaTriggerP5BunshinAction : NinjaTriggerBooleanAction
+{
+    protected override string TypeKey => "luli_ninja_trigger_p5_bunshin";
+    protected override string SettingLabel => "P5完美分身";
+    public override string NodeDisplayName => "Ninja/P5完美分身";
+
+    protected override void Apply(bool enabled)
+        => NinjaSettings.Instance.P5PerfectBunshin = enabled;
+
+    public static void Register(RotationNodeContext context)
+        => RegisterType<NinjaTriggerP5BunshinAction>(context, "luli_ninja_trigger_p5_bunshin");
+}
+
+public sealed class NinjaNinkiCondition : ICondition, ISerializableCondition, IJobNodeDescriptor
+{
+    private const string TypeKey = "luli_ninja_ninki";
+    private int threshold;
+
+    public string NodeDisplayName => "Ninja/忍气检测";
+    public NodeParamInfo[] Params => new[] { new NodeParamInfo("threshold", "忍气", "忍气达到此值时通过", "int") };
+
+    public bool Draw()
+    {
+        var value = threshold;
+        if (!ImGui.InputInt("忍气阈值", ref value)) return false;
+        threshold = Math.Clamp(value, 0, 100);
+        return true;
+    }
+
+    public string GetParam(string fieldName) => fieldName == "threshold" ? threshold.ToString() : string.Empty;
+
+    public void SetParam(string fieldName, string value)
+    {
+        if (fieldName == "threshold" && int.TryParse(value, out var parsed))
+            threshold = Math.Clamp(parsed, 0, 100);
+    }
+
+    public bool EvaluateImmediate() => JobGaugeHelper.NIN.Ninki >= threshold;
+    public bool EvaluateWait() => EvaluateImmediate();
+
+    public ConditionDto ToDto() => new()
+    {
+        Type = TypeKey,
+        Immediate = true,
+        Params = new Dictionary<string, string> { ["threshold"] = threshold.ToString() },
+    };
+
+    public static void Register(RotationNodeContext context)
+    {
+        ConditionFactory.Register(context, TypeKey, dto =>
+        {
+            var condition = new NinjaNinkiCondition();
+            if (dto.Params != null && dto.Params.TryGetValue("threshold", out var value))
+                condition.SetParam("threshold", value);
+            return condition;
+        });
+    }
+}
