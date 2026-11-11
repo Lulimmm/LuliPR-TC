@@ -1,7 +1,7 @@
 using System;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
-using ErosUI;
+using MewUI;
 using PromeRotation.Core;
 using PromeRotation.Data;
 using PromeRotation.Helpers;
@@ -14,7 +14,8 @@ namespace Reaper.PR;
 
 public sealed partial class ReaperRotation
 {
-    // 职业专属设置绘制到 ErosUI 的「基础设置」页，配置仍沿用 opener.json。
+    // 职业专属设置绘制到 MewUI 的「基础设置」页，配置保存在 setting.json。
+
     internal static void DrawGeneralSettings()
     {
         ImGui.Spacing();
@@ -49,6 +50,7 @@ public sealed partial class ReaperRotation
             SaveOpenerConfig();
         }
 
+        ImGui.SameLine(0f, 24f);
         var rush = openerConfig.OpenerRush;
         if (ImGui.Checkbox("起手使用突进", ref rush))
         {
@@ -81,6 +83,10 @@ public sealed partial class ReaperRotation
             ImGui.EndCombo();
         }
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextUnformatted("Hook 设置");
+
         var extraRange = openerConfig.ExtraRange;
         ImGui.SetNextItemWidth(360f);
         if (ImGui.SliderFloat("长臂猿额外攻击距离", ref extraRange, 0f, 3f, "%.1f 米"))
@@ -101,7 +107,7 @@ public sealed partial class ReaperRotation
 
 public void DrawSettings()
     {
-        ErosUIFramework.OpenSettings();
+        MewUIFramework.OpenSettings();
         return;
         /*
         EnforceHiddenPanels();
