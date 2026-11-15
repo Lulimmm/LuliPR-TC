@@ -14,7 +14,7 @@
     <WarningsAsErrors>CS4014</WarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="**\*.cs" Exclude="bin\**\*;obj\**\*;**\bin\**\*;**\obj\**\*" />
+    <Compile Include="**\*.cs" Exclude="bin\**\*;obj\**\*;Reaper参考\**\*;**\bin\**\*;**\obj\**\*" />
     <PackageReference Include="PromeRotation.SDK.TC" Version="0.1.0-preview.2" />
     <EmbeddedResource Include="Reaper\MewUI\Resources\bg2.webp">
       <LogicalName>MewUI.Resources.bg2.webp</LogicalName>
