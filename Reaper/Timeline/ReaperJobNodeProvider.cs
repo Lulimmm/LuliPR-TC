@@ -24,6 +24,7 @@ public sealed class ReaperJobNodeProvider : IJobNodeProvider
         ReaperQtAction.Register(context);
         ReaperHotkeyAction.Register(context);
         ReaperPotionSettingAction.Register(context);
+        ReaperShadowOfDeathTargetAction.Register(context);
     }
 
     public IReadOnlyList<(string DisplayName, string Description, Func<ICondition> Create)> GetConditionDescriptors()
@@ -52,5 +53,6 @@ public sealed class ReaperJobNodeProvider : IJobNodeProvider
             ("Reaper/QT", "三态选择多个 Reaper QT 并批量设置", () => new ReaperQtAction()),
             ("Reaper/HotKey", "执行 Reaper 热键面板中的指定动作", () => new ReaperHotkeyAction()),
             ("Reaper/PotionSetting", "设置 Reaper 爆发药时机方案", () => new ReaperPotionSettingAction()),
+            ("Reaper/按DataID禁用死亡之影", "按目标DataID禁用或恢复死亡之影", () => new ReaperShadowOfDeathTargetAction()),
         };
 }
