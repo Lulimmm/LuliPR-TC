@@ -16,19 +16,20 @@
   <ItemGroup>
     <Compile Include="**\*.cs" Exclude="bin\**\*;obj\**\*;Reaper参考\**\*;**\bin\**\*;**\obj\**\*" />
     <PackageReference Include="PromeRotation.SDK.TC" Version="0.1.0-preview.2" />
-    <EmbeddedResource Include="Reaper\MewUI\Resources\bg2.webp">
-      <LogicalName>MewUI.Resources.bg2.webp</LogicalName>
+    <!-- Transparent frames use PNG; opaque backgrounds use JPEG. Both use built-in WIC codecs. -->
+    <EmbeddedResource Include="Reaper\MewUI\Resources\bg2_compact.jpg">
+      <LogicalName>MewUI.Resources.bg2_compact.jpg</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="Reaper\MewUI\Resources\start.webp">
-      <LogicalName>MewUI.Resources.start.webp</LogicalName>
+    <EmbeddedResource Include="Reaper\MewUI\Resources\start_compact.jpg">
+      <LogicalName>MewUI.Resources.start_compact.jpg</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="Reaper\MewUI\Resources\loading.webp">
-      <LogicalName>MewUI.Resources.loading.webp</LogicalName>
+    <EmbeddedResource Include="Reaper\MewUI\Resources\loading_compact.jpg">
+      <LogicalName>MewUI.Resources.loading_compact.jpg</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="Reaper\MewUI\Resources\pet\*.webp">
+    <EmbeddedResource Include="Reaper\MewUI\Resources\pet\*.png">
       <LogicalName>MewUI.Resources.pet.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="Reaper\MewUI\Resources\loader\*.webp">
+    <EmbeddedResource Include="Reaper\MewUI\Resources\loader\*.png">
       <LogicalName>MewUI.Resources.loader.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
